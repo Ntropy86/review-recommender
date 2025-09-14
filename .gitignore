@@ -1,0 +1,11 @@
+.venv/
+.cache/
+data/
+logs/
+models/
+outputs/
+__pycache__/
+*.pyc
+*.pkl
+*.log
+.DS_Store
