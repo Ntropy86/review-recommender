@@ -30,8 +30,9 @@ class Config:
     APP_PORT = int(os.getenv("APP_PORT", "8501"))
     APP_TITLE = os.getenv("APP_TITLE", "Review Search Copilot")
     
-    # Data Paths
-    DATA_DIR = Path(os.getenv("DATA_DIR", "data/processed"))
+    # Data Paths - HF Datasets
+    HF_DATASET = os.getenv("HF_DATASET", "ntropy86/AmazonReviewsCompiled")
+    DATA_DIR = Path(os.getenv("DATA_DIR", "hf://datasets/ntropy86/AmazonReviewsCompiled"))
     PRODUCT_EMB_FILE = os.getenv("PRODUCT_EMB_FILE", "product_emb.npy")
     PRODUCT_META_FILE = os.getenv("PRODUCT_META_FILE", "product_emb_meta.parquet")
     REVIEWS_EMB_FILE = os.getenv("REVIEWS_EMB_FILE", "reviews_with_embeddings.parquet")
@@ -82,15 +83,22 @@ class Config:
         log_dir = Path(cls.LOG_FILE).parent
         log_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create data directory
-        cls.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        # For HF datasets, we don't need to validate file existence locally
+        # The datasets library will handle loading from HF
+        if not cls.HF_DATASET:
+            raise ValueError("HF_DATASET environment variable must be set")
         
-        # Validate critical files exist (for non-development environments)
-        if cls.ENVIRONMENT != "development":
-            critical_files = [cls.PRODUCT_EMB_PATH, cls.PRODUCT_META_PATH]
-            missing_files = [f for f in critical_files if not f.exists()]
-            if missing_files:
-                raise FileNotFoundError(f"Critical data files missing: {missing_files}")
+        # Test HF dataset access (optional, only if datasets library is available)
+        try:
+            import datasets
+            # Quick test to see if dataset is accessible
+            datasets.load_dataset(cls.HF_DATASET, split="train", streaming=True).take(1)
+        except ImportError:
+            # datasets not available, skip validation
+            pass
+        except Exception as e:
+            logging.warning(f"Could not validate HF dataset access: {e}")
+            # Continue anyway - might work at runtime
     
     @classmethod
     def setup_logging(cls) -> None:

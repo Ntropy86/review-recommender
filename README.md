@@ -1,3 +1,15 @@
+---
+title: Review Search Copilot
+emoji: ✨
+colorFrom: blue
+colorTo: purple
+sdk: streamlit
+sdk_version: 1.49.1
+app_file: app.py
+pinned: false
+license: mit
+---
+
 # 🛍️ AI-Powered Product Search Engine
 
 <div align="center">
@@ -13,7 +25,7 @@
 
 *Combining semantic embeddings with BM25 sparse retrieval for enterprise-grade product discovery*
 
-[🚀 Quick Start](#-quick-start) • [📖 Documentation](#-documentation) • [🎯 Demo](#-demo) • [🤝 Contributing](#-contributing)
+[🚀 Live Demo](https://ntropy86-review-search-copilot.hf.space) • [📖 Documentation](#-documentation) • [🎯 Demo](#-demo) • [🤝 Contributing](#-contributing)
 
 </div>
 

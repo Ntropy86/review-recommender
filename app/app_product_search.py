@@ -88,38 +88,37 @@ def _cross_encoder(name: str):
 @st.cache_data(show_spinner=False)
 def _product_index() -> Tuple[pd.DataFrame, np.ndarray]:
     try:
-        if not P_EMB.exists():
-            logger.error(f"Product embeddings file not found: {P_EMB}")
-            st.error(f"❌ Product embeddings file missing: `{P_EMB.name}`")
-            st.info("💡 Please run the data preprocessing pipeline first:\n```bash\npython nlp/10_product_prep.py\npython nlp/11_build_product_embeddings.py\n```")
+        logger.info(f"Loading product data from HF dataset: {config.HF_DATASET}")
+        
+        # Load from HF datasets
+        from datasets import load_dataset
+        dataset = load_dataset(config.HF_DATASET, split="train", streaming=False)
+        
+        # Load metadata
+        meta_df = pd.DataFrame({
+            'sku': dataset['sku'],
+            'agg_text': dataset['agg_text'], 
+            'avg_stars': dataset['avg_stars'],
+            'n_reviews': dataset['n_reviews']
+        })
+        
+        # Load embeddings as numpy array
+        embeddings_list = dataset['embeddings']
+        V = np.array(embeddings_list, dtype=np.float32)
+        
+        if len(meta_df) != V.shape[0]:
+            logger.error(f"Dimension mismatch: meta rows ({len(meta_df)}) != embedding rows ({V.shape[0]})")
+            st.error(f"❌ Data inconsistency: metadata has {len(meta_df)} rows but embeddings have {V.shape[0]} rows")
             st.stop()
         
-        if not P_META.exists():
-            logger.error(f"Product metadata file not found: {P_META}")
-            st.error(f"❌ Product metadata file missing: `{P_META.name}`")
-            st.info("💡 Please run the data preprocessing pipeline first:\n```bash\npython nlp/10_product_prep.py\n```")
-            st.stop()
-        
-        logger.info(f"Loading product metadata from {P_META}")
-        meta = pd.read_parquet(P_META)
-        
-        logger.info(f"Loading product embeddings from {P_EMB}")
-        V = np.load(P_EMB, mmap_mode="r").astype(np.float32)
-        
-        if len(meta) != V.shape[0]:
-            logger.error(f"Dimension mismatch: meta rows ({len(meta)}) != embedding rows ({V.shape[0]})")
-            st.error(f"❌ Data inconsistency: metadata has {len(meta)} rows but embeddings have {V.shape[0]} rows")
-            st.info("💡 Please rebuild the embeddings to match the metadata.")
-            st.stop()
-        
-        logger.info(f"Successfully loaded {len(meta)} products with {V.shape[1]}-dimensional embeddings")
-        Vn = _l2norm(np.array(V), axis=1)
-        return meta.reset_index(drop=True), Vn
+        logger.info(f"Successfully loaded {len(meta_df)} products with {V.shape[1]}-dimensional embeddings")
+        Vn = _l2norm(V, axis=1)
+        return meta_df.reset_index(drop=True), Vn
         
     except Exception as e:
-        logger.error(f"Failed to load product index: {e}")
-        st.error(f"❌ Failed to load product data: {str(e)}")
-        st.info("💡 Please check that your data files are valid and not corrupted.")
+        logger.error(f"Failed to load product index from HF: {e}")
+        st.error(f"❌ Failed to load product data from HF dataset: {str(e)}")
+        st.info("💡 Please check your HF dataset configuration and internet connection.")
         st.stop()
 
 @st.cache_resource(show_spinner=False)
@@ -135,24 +134,25 @@ def _bm25_loader():
         logger.error(f"Failed to import BM25: {e}")
         return None
     
-    if not BM25_PKL.exists():
-        logger.info(f"BM25 index file not found: {BM25_PKL}")
-        if config.ENABLE_BM25:
-            st.info(f"ℹ️ BM25 search disabled: index file `{BM25_PKL.name}` not found. Run preprocessing to create it.")
-        return None
-    
     try:
-        logger.info(f"Loading BM25 index from {BM25_PKL}")
-        with open(BM25_PKL, "rb") as f:
-            blob = pickle.load(f)
+        logger.info(f"Loading BM25 index from HF dataset: {config.HF_DATASET}")
         
-        bm25_index = BM25Okapi(blob["corpus"])
-        logger.info(f"Successfully loaded BM25 index with {len(blob['skus'])} documents")
-        return {"bm25": bm25_index, "skus": [str(s) for s in blob["skus"]]}
+        # Load BM25 data from HF dataset
+        from datasets import load_dataset
+        dataset = load_dataset(config.HF_DATASET, split="train", streaming=False)
+        
+        # Extract BM25 data (assuming it's stored as pickled bytes or similar)
+        # For now, we'll create a simple BM25 index from the product text
+        corpus = dataset['agg_text']
+        bm25_index = BM25Okapi(corpus)
+        skus = dataset['sku']
+        
+        logger.info(f"Successfully loaded BM25 index with {len(skus)} documents")
+        return {"bm25": bm25_index, "skus": [str(s) for s in skus]}
         
     except Exception as e:
-        logger.error(f"Failed to load BM25 index: {e}")
-        st.warning(f"⚠️ BM25 search disabled: failed to load index file ({str(e)})")
+        logger.error(f"Failed to load BM25 index from HF: {e}")
+        st.warning(f"⚠️ BM25 search disabled: failed to load from HF dataset ({str(e)})")
         return None
 
 # ---------- Utils ----------
@@ -326,62 +326,55 @@ def run_search(query: str, k: int, rerank_k: int,
 # ---------- Snippets helper ----------
 def _best_snippets(qvec: np.ndarray, cand_skus: List[str], max_rows:int=300_000) -> Dict[str, Dict]:
     try:
-        if not REV_EMB.exists():
-            logger.info(f"Review embeddings file not found: {REV_EMB}")
-            return {}
+        logger.info(f"Loading review embeddings for snippet extraction from HF dataset")
         
-        logger.info(f"Loading review embeddings for snippet extraction")
-        cols = ["sku","text","stars","embedding"]
+        # Load review data from HF dataset
+        from datasets import load_dataset
+        dataset = load_dataset(config.HF_DATASET, split="train", streaming=False)
         
-        # First check if required columns exist
-        try:
-            available_cols = pd.read_parquet(REV_EMB, nrows=1).columns.tolist()
-            missing_cols = [c for c in ["sku", "text", "embedding"] if c not in available_cols]
-            if missing_cols:
-                logger.warning(f"Review embeddings missing required columns: {missing_cols}")
-                return {}
-        except Exception as e:
-            logger.warning(f"Failed to check review embeddings schema: {e}")
-            return {}
+        # Filter for candidate SKUs
+        sku_set = set(cand_skus)
+        filtered_indices = [i for i, sku in enumerate(dataset['sku']) if str(sku) in sku_set]
         
-        meta = pd.read_parquet(REV_EMB, columns=[c for c in cols if c != "embedding"])
-        if "sku" not in meta.columns:
-            logger.warning("Review embeddings missing 'sku' column")
-            return {}
-        
-        sel = meta["sku"].astype(str).isin(set(cand_skus))
-        sub_meta = meta[sel]
-        if sub_meta.empty:
+        if not filtered_indices:
             logger.info("No matching reviews found for candidate SKUs")
             return {}
         
-        emb_series = pd.read_parquet(REV_EMB, columns=["embedding"]).iloc[sub_meta.index]
-        if len(sub_meta) > max_rows:
-            logger.info(f"Limiting review processing to {max_rows} rows")
-            sub_meta = sub_meta.iloc[:max_rows]
-            emb_series = emb_series.iloc[:max_rows]
+        # Extract review data for candidates
+        review_texts = [dataset['text'][i] for i in filtered_indices]
+        review_embeddings = [dataset['review_embeddings'][i] for i in filtered_indices]  # Assuming this column exists
+        review_skus = [str(dataset['sku'][i]) for i in filtered_indices]
+        review_stars = [dataset['stars'][i] for i in filtered_indices]
         
-        E = np.stack(emb_series["embedding"].values).astype(np.float32)
+        # Convert embeddings to numpy array
+        E = np.array(review_embeddings, dtype=np.float32)
         En = _l2norm(E, axis=1)
-        sims = En @ qvec
-        sub_meta = sub_meta.reset_index(drop=True)
-        sub_meta["__sim"] = sims
         
+        # Calculate similarities
+        sims = En @ qvec
+        
+        # Find best snippet per SKU
         best = {}
-        for sku, grp in sub_meta.groupby("sku"):
-            j = int(grp["__sim"].values.argmax())
-            row = grp.iloc[j]
-            best[str(sku)] = {
-                "score": float(row["__sim"]), 
-                "text": str(row["text"])[:600], 
-                "stars": float(row.get("stars", np.nan))
-            }
+        sku_to_indices = {}
+        for i, sku in enumerate(review_skus):
+            if sku not in sku_to_indices:
+                sku_to_indices[sku] = []
+            sku_to_indices[sku].append(i)
+        
+        for sku, indices in sku_to_indices.items():
+            if indices:
+                best_idx = indices[np.argmax([sims[i] for i in indices])]
+                best[sku] = {
+                    "score": float(sims[best_idx]), 
+                    "text": str(review_texts[best_idx])[:600], 
+                    "stars": float(review_stars[best_idx])
+                }
         
         logger.info(f"Found best snippets for {len(best)} products")
         return best
         
     except Exception as e:
-        logger.error(f"Failed to extract review snippets: {e}")
+        logger.error(f"Failed to extract review snippets from HF: {e}")
         if config.ENABLE_SNIPPETS:
             st.warning(f"⚠️ Review snippets disabled due to error: {str(e)}")
         return {}

@@ -79,8 +79,5 @@ tzdata==2025.2
 umap-learn==0.5.9.post2
 urllib3==2.5.0
 webencodings==0.5.1
-rank-bm25==0.2.2
-python-dotenv==1.0.1
-pytest==8.3.4
-pytest-cov==6.0.0
-pytest-mock==3.14.0
+datasets==3.2.0
+huggingface-hub==0.34.4
