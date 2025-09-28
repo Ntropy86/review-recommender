@@ -10,7 +10,7 @@
 #   python app/test.py -q "noise cancelling headphones for flights" -k 10 --rerank_k 50 --w-bm25 0.2 --w-rerank 0.2
 
 from __future__ import annotations
-import argparse, json, math, os, pickle, sys
+import argparse, json, math, os, pickle, re, sys
 from pathlib import Path
 from typing import List, Dict, Tuple
 
@@ -27,6 +27,65 @@ BM25_PKL= DATA / "product_bm25.pkl"                    # optional
 # ----------- Models -----------
 EMB_MODEL = os.environ.get("EMB_MODEL", "BAAI/bge-small-en-v1.5")   # must match your build
 RERANK_MODEL = os.environ.get("RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+# ----------- Synonyms for gating -----------
+TOKEN_RE = re.compile(r"[a-z0-9]+(?:'[a-z0-9]+)?")
+STOP = {"a","an","the","and","or","of","for","to","in","on","with","is","are","it","this","that"}
+
+SYN = {
+    "sock": {"sock","socks"},
+    "headphone": {"headphone","headphones","earphone","earphones","earbud","earbuds","headset"},
+    "keyboard": {"keyboard","keyboards"},
+    "wireless": {"wireless","bluetooth"},
+    "noise": {"noise cancelling","noise-canceling","noise canceling","anc"},
+    "cat": {"cat","cats","kitten","kittens","kitty"},
+    "dog": {"dog","dogs","puppy","puppies"},
+    "design": {"design","pattern","print","graphic","artwork","motif","theme"},
+}
+COLORS = {
+    "yellow":{"yellow","mustard","lemon","gold","golden"},
+    "red":{"red","scarlet","crimson","maroon"},
+    "blue":{"blue","navy","cobalt","azure"},
+    "green":{"green","emerald","olive"},
+    "black":{"black"},
+    "white":{"white","ivory"},
+    "pink":{"pink","rose"},
+    "purple":{"purple","violet","lavender"},
+    "orange":{"orange","amber"},
+    "brown":{"brown","tan","beige","khaki"},
+    "gray":{"gray","grey","charcoal","slate"},
+}
+
+def tokenize_query(q: str) -> List[str]:
+    return [t for t in TOKEN_RE.findall(q.lower()) if t not in STOP]
+
+def _build_gate_groups(query: str) -> List[set[str]]:
+    ql = query.lower()
+    groups: List[set[str]] = []
+    # colors explicitly mentioned
+    for cname, syns in COLORS.items():
+        if any(w in ql for w in syns):
+            groups.append(syns)
+    # category / key nouns
+    toks = tokenize_query(query)
+    for t in toks:
+        if t in SYN: groups.append(SYN[t])
+        elif len(t) >= 4: groups.append({t})
+    # deduplicate identical sets
+    uniq = []
+    for g in groups:
+        if g not in uniq: uniq.append(g)
+    return uniq[:6]  # cap
+
+def _gate_factor(text: str, groups: List[set[str]], penalty: float = 0.5) -> float:
+    tl = text.lower()
+    hits = 0
+    factor = 1.0
+    for g in groups:
+        ok = any(s in tl for s in g)
+        if ok: hits += 1
+        else: factor *= penalty
+    return factor
 
 # Lazy imports
 def _load_st_encoder():
@@ -229,6 +288,14 @@ def search(args):
         best_contrib = minmax(best_contrib)
     cand["_bestrev"] = best_contrib
 
+    # Gating
+    groups = _build_gate_groups(args.query)
+    gate_vals = []
+    for txt in cand["agg_text"].astype(str).str.slice(0, 6000).tolist():
+        gf = _gate_factor(txt, groups, penalty=args.gate_penalty)
+        gate_vals.append(gf)
+    cand["_gate"] = np.array(gate_vals, dtype=np.float32)
+
     # Final score
     final = (
         args.w_dense  * cand["_dense"].values +
@@ -238,7 +305,7 @@ def search(args):
         args.w_best   * cand["_bestrev"].values
     ).astype(np.float32)
 
-    cand["_final"] = final
+    cand["_final"] = final * cand["_gate"].values
     cand = cand.sort_values("_final", ascending=False).head(args.k).reset_index(drop=True)
 
     # Attach snippet text
@@ -289,6 +356,7 @@ def parse_args():
     ap.add_argument("--w-prior", type=float, default=0.10)
     ap.add_argument("--w-best", type=float, default=0.05)
     ap.add_argument("--prior-C", type=float, default=20.0, help="Bayesian prior strength")
+    ap.add_argument("--gate-penalty", type=float, default=0.5, help="Penalty per missing attribute group (0.1-1.0)")
     ap.add_argument("--json-out", type=str, default="", help="Optional path to save results JSON")
     return ap.parse_args()
 

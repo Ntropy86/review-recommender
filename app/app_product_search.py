@@ -1,6 +1,6 @@
 # app/streamlit_app.py  — polished UI + gates + small-sample damping
 from __future__ import annotations
-import os, math, json, pickle, time, re
+import math, json, pickle, time, re, logging
 from pathlib import Path
 from typing import List, Dict, Tuple
 
@@ -8,18 +8,32 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-# ---------- Paths ----------
-DATA = Path("data/processed")
-P_EMB   = DATA / "product_emb.npy"
-P_META  = DATA / "product_emb_meta.parquet"
-REV_EMB = DATA / "reviews_with_embeddings.parquet"      # optional
-BM25_PKL= DATA / "product_bm25.pkl"                     # optional
+# Import configuration
+import sys
+sys.path.append(str(Path(__file__).parent.parent))
+from config import config
 
-EMB_MODEL    = os.environ.get("EMB_MODEL", "BAAI/bge-small-en-v1.5")
-RERANK_MODEL = os.environ.get("RERANK_MODEL","cross-encoder/ms-marco-MiniLM-L-6-v2")
+# Setup logging
+config.setup_logging()
+logger = logging.getLogger(__name__)
+
+# ---------- Paths (from config) ----------
+P_EMB   = config.PRODUCT_EMB_PATH
+P_META  = config.PRODUCT_META_PATH
+REV_EMB = config.REVIEWS_EMB_PATH
+BM25_PKL= config.BM25_PATH
+
+EMB_MODEL    = config.EMB_MODEL
+RERANK_MODEL = config.RERANK_MODEL
 
 # ---------- Look & Feel ----------
-st.set_page_config(page_title="Review Search Copilot", page_icon="✨", layout="wide")
+st.set_page_config(page_title=config.APP_TITLE, page_icon="✨", layout="wide")
+
+# Simple health check endpoint
+if len(st.query_params) > 0 and "health" in st.query_params:
+    st.write("OK")
+    st.stop()
+
 st.markdown("""
 <style>
 :root { --fg:#111827; --soft:#6b7280; --bg:#0b1020; --card:#111827; --chip:#0ea5a4; }
@@ -38,37 +52,108 @@ h1,h2,h3 { color:#f9fafb !important; }
 # ---------- Caches ----------
 @st.cache_resource(show_spinner=False)
 def _st_encoder(name: str):
-    from sentence_transformers import SentenceTransformer
-    return SentenceTransformer(name)
+    try:
+        from sentence_transformers import SentenceTransformer
+        logger.info(f"Loading sentence transformer model: {name}")
+        model = SentenceTransformer(name)
+        logger.info(f"Successfully loaded sentence transformer: {name}")
+        return model
+    except ImportError as e:
+        logger.error(f"SentenceTransformers library not available: {e}")
+        st.error("❌ SentenceTransformers library not installed. Please install with: `pip install sentence-transformers`")
+        st.stop()
+    except Exception as e:
+        logger.error(f"Failed to load sentence transformer model {name}: {e}")
+        st.error(f"❌ Failed to load embedding model `{name}`: {str(e)}")
+        st.info("💡 This might be due to network issues or an invalid model name. Try again or check your internet connection.")
+        st.stop()
 
 @st.cache_resource(show_spinner=False)
 def _cross_encoder(name: str):
-    from sentence_transformers import CrossEncoder
-    try: return CrossEncoder(name)
-    except Exception: return None
+    try:
+        from sentence_transformers import CrossEncoder
+        logger.info(f"Loading cross-encoder model: {name}")
+        model = CrossEncoder(name)
+        logger.info(f"Successfully loaded cross-encoder: {name}")
+        return model
+    except ImportError as e:
+        logger.warning(f"SentenceTransformers library not available for cross-encoder: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to load cross-encoder model {name}: {e}")
+        if config.ENABLE_RERANKING:
+            st.warning(f"⚠️ Cross-encoder reranking disabled: failed to load model `{name}` ({str(e)})")
+        return None
 
 @st.cache_data(show_spinner=False)
 def _product_index() -> Tuple[pd.DataFrame, np.ndarray]:
-    if not P_EMB.exists() or not P_META.exists():
-        st.error("Missing product artifacts (product_emb.npy / product_emb_meta.parquet)."); st.stop()
-    meta = pd.read_parquet(P_META)
-    V = np.load(P_EMB, mmap_mode="r").astype(np.float32)
-    if len(meta) != V.shape[0]:
-        st.error(f"meta rows ({len(meta)}) != emb rows ({V.shape[0]})"); st.stop()
-    Vn = _l2norm(np.array(V), axis=1)
-    return meta.reset_index(drop=True), Vn
+    try:
+        if not P_EMB.exists():
+            logger.error(f"Product embeddings file not found: {P_EMB}")
+            st.error(f"❌ Product embeddings file missing: `{P_EMB.name}`")
+            st.info("💡 Please run the data preprocessing pipeline first:\n```bash\npython nlp/10_product_prep.py\npython nlp/11_build_product_embeddings.py\n```")
+            st.stop()
+        
+        if not P_META.exists():
+            logger.error(f"Product metadata file not found: {P_META}")
+            st.error(f"❌ Product metadata file missing: `{P_META.name}`")
+            st.info("💡 Please run the data preprocessing pipeline first:\n```bash\npython nlp/10_product_prep.py\n```")
+            st.stop()
+        
+        logger.info(f"Loading product metadata from {P_META}")
+        meta = pd.read_parquet(P_META)
+        
+        logger.info(f"Loading product embeddings from {P_EMB}")
+        V = np.load(P_EMB, mmap_mode="r").astype(np.float32)
+        
+        if len(meta) != V.shape[0]:
+            logger.error(f"Dimension mismatch: meta rows ({len(meta)}) != embedding rows ({V.shape[0]})")
+            st.error(f"❌ Data inconsistency: metadata has {len(meta)} rows but embeddings have {V.shape[0]} rows")
+            st.info("💡 Please rebuild the embeddings to match the metadata.")
+            st.stop()
+        
+        logger.info(f"Successfully loaded {len(meta)} products with {V.shape[1]}-dimensional embeddings")
+        Vn = _l2norm(np.array(V), axis=1)
+        return meta.reset_index(drop=True), Vn
+        
+    except Exception as e:
+        logger.error(f"Failed to load product index: {e}")
+        st.error(f"❌ Failed to load product data: {str(e)}")
+        st.info("💡 Please check that your data files are valid and not corrupted.")
+        st.stop()
 
 @st.cache_resource(show_spinner=False)
 def _bm25_loader():
     try:
         from rank_bm25 import BM25Okapi
-    except Exception:
+    except ImportError as e:
+        logger.warning(f"BM25 library not available: {e}")
+        if config.ENABLE_BM25:
+            st.warning("⚠️ BM25 search disabled: `rank_bm25` library not installed. Install with: `pip install rank-bm25`")
         return None
-    if not BM25_PKL.exists(): return None
-    with open(BM25_PKL, "rb") as f:
-        blob = pickle.load(f)
-    from rank_bm25 import BM25Okapi
-    return {"bm25": BM25Okapi(blob["corpus"]), "skus": [str(s) for s in blob["skus"]]}
+    except Exception as e:
+        logger.error(f"Failed to import BM25: {e}")
+        return None
+    
+    if not BM25_PKL.exists():
+        logger.info(f"BM25 index file not found: {BM25_PKL}")
+        if config.ENABLE_BM25:
+            st.info(f"ℹ️ BM25 search disabled: index file `{BM25_PKL.name}` not found. Run preprocessing to create it.")
+        return None
+    
+    try:
+        logger.info(f"Loading BM25 index from {BM25_PKL}")
+        with open(BM25_PKL, "rb") as f:
+            blob = pickle.load(f)
+        
+        bm25_index = BM25Okapi(blob["corpus"])
+        logger.info(f"Successfully loaded BM25 index with {len(blob['skus'])} documents")
+        return {"bm25": bm25_index, "skus": [str(s) for s in blob["skus"]]}
+        
+    except Exception as e:
+        logger.error(f"Failed to load BM25 index: {e}")
+        st.warning(f"⚠️ BM25 search disabled: failed to load index file ({str(e)})")
+        return None
 
 # ---------- Utils ----------
 TOKEN_RE = re.compile(r"[a-z0-9]+(?:'[a-z0-9]+)?")
@@ -82,6 +167,7 @@ SYN = {
     "noise": {"noise cancelling","noise-canceling","noise canceling","anc"},
     "cat": {"cat","cats","kitten","kittens","kitty"},
     "dog": {"dog","dogs","puppy","puppies"},
+    "design": {"design","pattern","print","graphic","artwork","motif","theme"},
 }
 COLORS = {
     "yellow":{"yellow","mustard","lemon","gold","golden"},
@@ -239,24 +325,66 @@ def run_search(query: str, k: int, rerank_k: int,
 
 # ---------- Snippets helper ----------
 def _best_snippets(qvec: np.ndarray, cand_skus: List[str], max_rows:int=300_000) -> Dict[str, Dict]:
-    if not REV_EMB.exists(): return {}
-    cols = ["sku","text","stars","embedding"]
-    meta = pd.read_parquet(REV_EMB, columns=[c for c in cols if c != "embedding"])
-    if "sku" not in meta.columns: return {}
-    sel = meta["sku"].astype(str).isin(set(cand_skus))
-    sub_meta = meta[sel]
-    if sub_meta.empty: return {}
-    emb_series = pd.read_parquet(REV_EMB, columns=["embedding"]).iloc[sub_meta.index]
-    if len(sub_meta) > max_rows:
-        sub_meta = sub_meta.iloc[:max_rows]; emb_series = emb_series.iloc[:max_rows]
-    E = np.stack(emb_series["embedding"].values).astype(np.float32)
-    En = _l2norm(E, axis=1); sims = En @ qvec
-    sub_meta = sub_meta.reset_index(drop=True); sub_meta["__sim"] = sims
-    best = {}
-    for sku, grp in sub_meta.groupby("sku"):
-        j = int(grp["__sim"].values.argmax()); row = grp.iloc[j]
-        best[str(sku)] = {"score": float(row["__sim"]), "text": str(row["text"])[:600], "stars": float(row.get("stars", np.nan))}
-    return best
+    try:
+        if not REV_EMB.exists():
+            logger.info(f"Review embeddings file not found: {REV_EMB}")
+            return {}
+        
+        logger.info(f"Loading review embeddings for snippet extraction")
+        cols = ["sku","text","stars","embedding"]
+        
+        # First check if required columns exist
+        try:
+            available_cols = pd.read_parquet(REV_EMB, nrows=1).columns.tolist()
+            missing_cols = [c for c in ["sku", "text", "embedding"] if c not in available_cols]
+            if missing_cols:
+                logger.warning(f"Review embeddings missing required columns: {missing_cols}")
+                return {}
+        except Exception as e:
+            logger.warning(f"Failed to check review embeddings schema: {e}")
+            return {}
+        
+        meta = pd.read_parquet(REV_EMB, columns=[c for c in cols if c != "embedding"])
+        if "sku" not in meta.columns:
+            logger.warning("Review embeddings missing 'sku' column")
+            return {}
+        
+        sel = meta["sku"].astype(str).isin(set(cand_skus))
+        sub_meta = meta[sel]
+        if sub_meta.empty:
+            logger.info("No matching reviews found for candidate SKUs")
+            return {}
+        
+        emb_series = pd.read_parquet(REV_EMB, columns=["embedding"]).iloc[sub_meta.index]
+        if len(sub_meta) > max_rows:
+            logger.info(f"Limiting review processing to {max_rows} rows")
+            sub_meta = sub_meta.iloc[:max_rows]
+            emb_series = emb_series.iloc[:max_rows]
+        
+        E = np.stack(emb_series["embedding"].values).astype(np.float32)
+        En = _l2norm(E, axis=1)
+        sims = En @ qvec
+        sub_meta = sub_meta.reset_index(drop=True)
+        sub_meta["__sim"] = sims
+        
+        best = {}
+        for sku, grp in sub_meta.groupby("sku"):
+            j = int(grp["__sim"].values.argmax())
+            row = grp.iloc[j]
+            best[str(sku)] = {
+                "score": float(row["__sim"]), 
+                "text": str(row["text"])[:600], 
+                "stars": float(row.get("stars", np.nan))
+            }
+        
+        logger.info(f"Found best snippets for {len(best)} products")
+        return best
+        
+    except Exception as e:
+        logger.error(f"Failed to extract review snippets: {e}")
+        if config.ENABLE_SNIPPETS:
+            st.warning(f"⚠️ Review snippets disabled due to error: {str(e)}")
+        return {}
 
 # ---------- UI ----------
 tab_search, tab_metrics, tab_how = st.tabs(["🔎 Search", "📈 Metrics", "ℹ️ How it works"])
@@ -265,23 +393,23 @@ with tab_search:
     st.header("✨ Review Search Copilot")
     q = st.text_input("What are you looking for?", "best socks with kittens that are yellow")
     c1, c2, c3 = st.columns([1.2,1,1])
-    k = c1.slider("Results (k)", 5, 25, 10, 1)
-    rerank_k = c2.slider("Rerank pool", 0, 200, 50, 10, help="Set 0 to disable cross-encoder.")
-    min_reviews = c3.slider("Min reviews for full trust", 0, 50, 8, 1)
+    k = c1.slider("Results (k)", 5, 25, config.DEFAULT_K, 1)
+    rerank_k = c2.slider("Rerank pool", 0, 200, config.DEFAULT_RERANK_K, 10, help="Set 0 to disable cross-encoder.")
+    min_reviews = c3.slider("Min reviews for full trust", 0, 50, config.DEFAULT_MIN_REVIEWS, 1)
 
     st.subheader("Weights")
     cc = st.columns(5)
-    w_dense  = cc[0].slider("Dense",   0.0, 1.0, 0.55, 0.05)
-    w_bm25   = cc[1].slider("BM25",    0.0, 1.0, 0.20, 0.05)
-    w_rerank = cc[2].slider("Rerank",  0.0, 1.0, 0.20, 0.05)
-    w_prior  = cc[3].slider("Prior",   0.0, 1.0, 0.20, 0.05)
-    w_best   = cc[4].slider("Best review", 0.0, 1.0, 0.10, 0.05)
+    w_dense  = cc[0].slider("Dense",   0.0, 1.0, config.DEFAULT_W_DENSE, 0.05)
+    w_bm25   = cc[1].slider("BM25",    0.0, 1.0, config.DEFAULT_W_BM25, 0.05)
+    w_rerank = cc[2].slider("Rerank",  0.0, 1.0, config.DEFAULT_W_RERANK, 0.05)
+    w_prior  = cc[3].slider("Prior",   0.0, 1.0, config.DEFAULT_W_PRIOR, 0.05)
+    w_best   = cc[4].slider("Best review", 0.0, 1.0, config.DEFAULT_W_BEST, 0.05)
 
     c4, c5 = st.columns([1,1])
-    gate_penalty = c4.slider("Penalty per missing attribute group", 0.1, 1.0, 0.5, 0.05,
+    gate_penalty = c4.slider("Penalty per missing attribute group", 0.1, 1.0, config.DEFAULT_GATE_PENALTY, 0.05,
                              help="Lower = stricter: missing color/category/keyword hurts more.")
-    use_snips = c5.checkbox("Score & show best review snippet (heavy)", value=True)
-    max_scan = st.select_slider("Max reviews scanned for snippets", options=[50_000, 100_000, 200_000, 300_000, 500_000], value=300_000)
+    use_snips = c5.checkbox("Score & show best review snippet (heavy)", value=config.ENABLE_SNIPPETS)
+    max_scan = st.select_slider("Max reviews scanned for snippets", options=[50_000, 100_000, 200_000, 300_000, 500_000], value=config.MAX_REVIEWS_SCAN)
 
     go = st.button("🚀 Search", type="primary", use_container_width=True)
 

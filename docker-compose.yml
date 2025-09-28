@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  review-search-app:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    volumes:
+      # Mount data directory for development
+      - ./data:/app/data:ro
+      # Mount logs directory
+      - ./logs:/app/logs
+    environment:
+      - ENVIRONMENT=development
+      - EMB_MODEL=${EMB_MODEL:-BAAI/bge-small-en-v1.5}
+      - RERANK_MODEL=${RERANK_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - review-search-network
+
+  # Optional: Add a reverse proxy for production
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/ssl:ro
+    depends_on:
+      - review-search-app
+    networks:
+      - review-search-network
+    profiles:
+      - production
+
+networks:
+  review-search-network:
+    driver: bridge
+
+volumes:
+  app_data:
+    driver: local
+  app_logs:
+    driver: local
