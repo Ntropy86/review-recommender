@@ -2,6 +2,7 @@
 """
 HF Spaces entry point for the Review Search Copilot.
 This file serves as the main entry point for Hugging Face Spaces deployment.
+Updated: 2025-09-28 - Force rebuild
 """
 
 import sys
