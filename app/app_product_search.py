@@ -99,7 +99,7 @@ def _product_index() -> Tuple[pd.DataFrame, np.ndarray]:
         emb_path = f"hf://datasets/{config.HF_DATASET}/product_emb.npy"
         fs = fsspec.filesystem('hf')
         with fs.open(emb_path, 'rb') as f:
-            V = np.load(f, mmap_mode="r").astype(np.float32)
+            V = np.load(f).astype(np.float32)  # Load into memory without mmap for remote files
         
         if len(meta) != V.shape[0]:
             logger.error(f"Dimension mismatch: meta rows ({len(meta)}) != embedding rows ({V.shape[0]})")
