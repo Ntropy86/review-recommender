@@ -10,6 +10,8 @@ pinned: false
 license: mit
 ---
 
+<!-- Build trigger: 2025-09-28 -->
+
 # 🛍️ AI-Powered Product Search Engine
 
 <div align="center">
