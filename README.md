@@ -27,7 +27,7 @@ license: mit
 
 *Combining semantic embeddings with BM25 sparse retrieval for enterprise-grade product discovery*
 
-[🚀 Live Demo](https://ntropy86-review-search-copilot.hf.space) • [📖 Documentation](#-documentation) • [🎯 Demo](#-demo) • [🤝 Contributing](#-contributing)
+[🚀 Live Demo](https://review-search-copilot.streamlit.app) • [📖 Documentation](#-documentation) • [🎯 Demo](#-demo) • [🤝 Contributing](#-contributing)
 
 </div>
 
@@ -138,35 +138,29 @@ flowchart LR
 
 ## 🚀 **Quick Start**
 
-### Option 1: Docker (Recommended)
-```bash
-# Clone and run with Docker
-git clone https://github.com/ntropy86/review-search-engine.git
-cd review-search-engine
-make docker-run
-```
+### Option 1: Streamlit Cloud (Recommended)
+[![Deploy to Streamlit Cloud](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/)
 
-### Option 2: Local Installation
+**One-click deployment:**
+1. Click the badge above or go to [Streamlit Cloud](https://share.streamlit.io/)
+2. Connect your GitHub account
+3. Select repository: `Ntropy86/review-recommender`
+4. Set main file: `app.py`
+5. Deploy!
+
+### Option 2: Local Development
 ```bash
 # Install dependencies
 pip install -r requirements.txt
 
-# Configure environment
-cp .env.example .env
-
-# Run preprocessing (if needed)
-make data-prep
-
-# Start application
-make run
+# Run locally
+streamlit run app.py
 ```
 
-### Option 3: Development Setup
+### Option 3: Docker
 ```bash
-# Full development environment
-make dev-setup
-make test
-make run
+# Build and run
+make docker-run
 ```
 
 ## 📁 **Project Structure**

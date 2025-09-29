@@ -1,0 +1,19 @@
+# System dependencies for Streamlit Cloud
+# These are installed via apt-get before Python packages
+
+# Build tools
+build-essential
+gcc
+g++
+
+# Required for some ML packages
+libgl1-mesa-glx
+libglib2.0-0
+libsm6
+libxext6
+libxrender-dev
+libgomp1
+
+# Git and version control
+git
+git-lfs
