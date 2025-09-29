@@ -94,9 +94,12 @@ def _product_index() -> Tuple[pd.DataFrame, np.ndarray]:
         meta_path = f"hf://datasets/{config.HF_DATASET}/product_emb_meta.parquet"
         meta = pd.read_parquet(meta_path)
         
-        # Load embeddings from HF
+        # Load embeddings from HF using fsspec (numpy doesn't support hf:// protocol directly)
+        import fsspec
         emb_path = f"hf://datasets/{config.HF_DATASET}/product_emb.npy"
-        V = np.load(emb_path, mmap_mode="r").astype(np.float32)
+        fs = fsspec.filesystem('hf')
+        with fs.open(emb_path, 'rb') as f:
+            V = np.load(f, mmap_mode="r").astype(np.float32)
         
         if len(meta) != V.shape[0]:
             logger.error(f"Dimension mismatch: meta rows ({len(meta)}) != embedding rows ({V.shape[0]})")
@@ -129,9 +132,11 @@ def _bm25_loader():
     try:
         logger.info(f"Loading BM25 index from HF dataset: {config.HF_DATASET}")
         
-        # Load BM25 index from HF
+        # Load BM25 index from HF using fsspec
+        import fsspec
         bm25_path = f"hf://datasets/{config.HF_DATASET}/product_bm25.pkl"
-        with open(bm25_path, "rb") as f:
+        fs = fsspec.filesystem('hf')
+        with fs.open(bm25_path, 'rb') as f:
             blob = pickle.load(f)
         
         bm25_index = BM25Okapi(blob["corpus"])
