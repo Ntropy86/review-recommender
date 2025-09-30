@@ -10,9 +10,12 @@ pinned: false
 license: mit
 ---
 
-<!-- Build trigger: 2025-09-28 -->
-
 # 🛍️ AI-Powered Product Search Engine
+
+**Main search interface showing product search results with scores, snippets, and parameter controls**
+
+![Demo Screenshot](demo.png)
+
 
 <div align="center">
 
@@ -286,12 +289,6 @@ graph TD
 **Bayesian Priors**: Adjusts ratings using review volume (addresses small sample bias)
 **Trust Scoring**: Higher confidence for products with more reviews
 **Attribute Gating**: Penalizes products missing query-specific attributes (color, category)
-
-## 🎯 **Demo**
-
-![Demo Screenshot](demo.png)
-
-**Main search interface showing product search results with scores, snippets, and parameter controls**
 
 ### Live Demo Features:
 - **Real-time Search**: Type queries and see instant results
