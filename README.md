@@ -27,7 +27,7 @@ license: mit
 
 *Combining semantic embeddings with BM25 sparse retrieval for enterprise-grade product discovery*
 
-[🚀 Live Demo](https://review-search-copilot.streamlit.app) • [📖 Documentation](#-documentation) • [🎯 Demo](#-demo) • [🤝 Contributing](#-contributing)
+[🚀 Live Demo](https://reviewrecommender.streamlit.app) • [📖 Documentation](#-documentation) • [🎯 Demo](#-demo) • [🤝 Contributing](#-contributing)
 
 </div>
 
@@ -289,10 +289,9 @@ graph TD
 
 ## 🎯 **Demo**
 
-> **📸 Image Needed**: Screenshot of the Streamlit interface showing search results
-> 
-> **File**: `images/demo-screenshot.png`
-> **Description**: Main search interface with query "yellow cat socks" showing results with scores, snippets, and parameter controls
+![Demo Screenshot](demo.png)
+
+**Main search interface showing product search results with scores, snippets, and parameter controls**
 
 ### Live Demo Features:
 - **Real-time Search**: Type queries and see instant results
